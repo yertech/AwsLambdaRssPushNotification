@@ -4,17 +4,25 @@
     <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AWSProjectType>Lambda</AWSProjectType>
+    <UserSecretsId>14053cbc-877c-4b57-bde4-bc8ef7f35fc1</UserSecretsId>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Amazon.Lambda.Core" Version="1.1.0" />
     <PackageReference Include="Amazon.Lambda.Serialization.SystemTextJson" Version="2.0.1" />
     <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="8.0.1" />
-    <PackageReference Include="JsonFlatFileDataStore" Version="2.2.2" />
+    <PackageReference Include="AWSSDK.S3" Version="3.5.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="3.1.7" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.FileExtensions" Version="3.1.7" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="3.1.7" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="3.1.7" />
     <PackageReference Include="NPushover" Version="1.2.1" />
+    <PackageReference Include="System.Security.Permissions" Version="4.7.0" />
     <PackageReference Include="System.ServiceModel.Syndication" Version="4.7.0" />
   </ItemGroup>
   <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Update="data.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

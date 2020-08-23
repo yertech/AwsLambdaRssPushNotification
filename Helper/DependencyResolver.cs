@@ -22,6 +22,7 @@ namespace AWSLambdaRssNotification.Helper
 
         private void ConfigureServices(IServiceCollection services)
         {
+            services.AddTransient<IConfigurationService, ConfigurationService>();
             services.AddAutoMapper(System.Reflection.Assembly.GetExecutingAssembly());
             // Register other services
             RegisterServices?.Invoke(services);

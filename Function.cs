@@ -1,16 +1,13 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.ServiceModel.Syndication;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Xml;
 using Amazon.Lambda.Core;
 using AutoMapper;
 using AWSLambdaRssNotification.Helper;
 using AWSLambdaRssNotification.Model;
-using JsonFlatFileDataStore;
 using Microsoft.Extensions.DependencyInjection;
 using NPushover;
 using NPushover.RequestObjects;
@@ -20,13 +17,15 @@ using NPushover.RequestObjects;
 
 namespace AWSLambdaRssNotification
 {
+   
 
     public class Function
     {
-        private readonly List<string> _filteringTerms = new List<string>(){ ".NET", ".NET CORE", "ASP.NET", "ASP.NET MVC", "C#" };
-        private readonly List<string> _feeds = new List<string>(){ "https://www.freelancer.com/rss.xml",
-            "https://www.upwork.com/ab/feed/jobs/rss?contractor_tier=2%2C3&proposals=0-4%2C5-9%2C10-14&q=%28.NET+Core+OR+React+OR+asp.net+mvc+OR+.NET+Framework+OR+Gastby%29&sort=recency&paging=0%3B10&api_params=1&securityToken=58e44659ae871d542fa6eff3ced8a927d26735d111ff61b699fde1f8be90cd1b14bb86e07f97035ab69f5712c7654bc41451aa5bccce3df882d038c6cfeea50c&userUid=1215640702124244992&orgUid=1215640702136827905"      };
+        private List<string> _filteringTerms;
+        private List<string> _feeds;
+        private const string keyName = "data.json";
         private readonly IMapper _mapper;
+        public IConfigurationService _configService;
 
         public Function()
         {
@@ -34,12 +33,16 @@ namespace AWSLambdaRssNotification
             var resolver = new DependencyResolver();
 
             _mapper = resolver.ServiceProvider.GetService<IMapper>();
+            _configService = resolver.ServiceProvider.GetService<IConfigurationService>();
+
         }
 
         // Use this ctor from unit tests that can mock IProductRepository
-        public Function( IMapper mapper)
+        public Function( IMapper mapper, IConfigurationService configService)
         {
             _mapper = mapper;
+            _configService = configService;
+
         }
 
 
@@ -47,65 +50,70 @@ namespace AWSLambdaRssNotification
         /// A simple function that takes a string and does a ToUpper
         /// </summary>
         /// <returns></returns>
-        public string FunctionHandler()
+        public async Task<string> FunctionHandler()
         {
+            var pushOverUser = _configService.GetConfiguration()["PushOverUser"];
             //Init Notification to pushover api
-            var po = new Pushover("agkxq9gsn3v16gsnuz4summp7haxch");
+            var po = new Pushover(_configService.GetConfiguration()["PushOverSecret"]);
 
-            try 
+            try
             {
                 //Get items for rss feeds
                 var itemsfeed = GetRssFeeds();
                 List<Item> items = _mapper.Map<List<Item>>(itemsfeed);
 
                 //filter items 
+                _filteringTerms = _configService.GetConfiguration()["FilteringTerms"].Split(";").ToList();
                 List<Item> newItems = items.Where(i =>
                     _filteringTerms.Any(t =>
                         i.Title.ToUpper().Contains(t) || i.Summary.ToUpper().Contains(t))).ToList();
 
+                //get file from s3
+                var client = new S3Utils();
+                var jobs = await client.GetFileContent(keyName);
+
                 //Get new items not in db
-                using (var store = new DataStore("data.json"))
+                var filteredItems = newItems.Where(item => jobs.All(dbi => dbi.Id != item.Id))
+                    .ToList();
+
+                // Quick message:
+                foreach (var newItem in filteredItems)
                 {
-                    var dbItems = store.GetCollection<Item>();
-                    var filteredItems = newItems.Where(item => dbItems.AsQueryable().All(dbi => dbi.Id != item.Id))
-                        .ToList();
-
-                    // Quick message:
-                    foreach (var newItem in filteredItems)
+                    newItem.CreatedDate = DateTime.Now;
+                    var msg = new Message(Sounds.Pushover)
                     {
-                        newItem.CreatedDate = DateTime.Now;
-                        var msg = new Message(Sounds.Pushover)
+                        Title = newItem.Id.ToLower().Contains("freelancer")
+                            ? $"Freelancer : {newItem.Title}"
+                            : $"Upwork : {newItem.Title}",
+                        Body = SubStringBody(newItem.Summary),
+                        Priority = Priority.Normal,
+                        IsHtmlBody = true,
+                        Timestamp = DateTime.Now,
+                        SupplementaryUrl = new SupplementaryURL
                         {
-                            Title = newItem.Id.ToLower().Contains("freelancer")
-                                ? $"Freelancer : {newItem.Title}"
-                                : $"Upwork : {newItem.Title}",
-                            Body = SubStringBody(newItem.Summary),
-                            Priority = Priority.Normal,
-                            IsHtmlBody = true,
-                            Timestamp = DateTime.Now,
-                            SupplementaryUrl = new SupplementaryURL
-                            {
-                                Uri = new Uri(newItem.Link),
-                                Title = newItem.Title
-                            }
-                        };
-                        var sendtask = po.SendMessageAsync(msg, "u789prun7x9xeqbdvgsusybysa5cra");
+                            Uri = new Uri(newItem.Link),
+                            Title = newItem.Title
+                        }
+                    };
+                    var sendtask = po.SendMessageAsync(msg, pushOverUser);
 
+                }
+
+                //Insert new items in db
+                if (filteredItems.Any())
+                {
+                    try
+                    {
+                        jobs.AddRange(filteredItems);
+                        var lastJobsOnly =  jobs.Where(i => i.CreatedDate >= DateTime.Now.AddDays(-7)).ToList();
+                        await client.UploadFile(lastJobsOnly, keyName);
                     }
-
-                    //Insert new items in db
-                    if (filteredItems.Any())
+                    catch (Exception e)
                     {
-                        try
-                        {
-                            dbItems.InsertMany(filteredItems);
-                        }
-                        catch (Exception e)
-                        {
-                            throw e;
-                        }
+                        throw e;
                     }
                 }
+
 
                 return "ok";
             }
@@ -119,7 +127,7 @@ namespace AWSLambdaRssNotification
                     IsHtmlBody = true,
                     Timestamp = DateTime.Now
                 };
-                var sendtask = po.SendMessageAsync(msg, "u789prun7x9xeqbdvgsusybysa5cra");
+                var sendtask = po.SendMessageAsync(msg, pushOverUser);
                 throw e;
             }
 
@@ -139,11 +147,12 @@ namespace AWSLambdaRssNotification
 
                     try
                     {
-                        text = newItemSummary.Substring(0, indexOfFooter).Substring(0, 1021-footer.Length);
+                        var footerLength = footer.Length > 1021 ? 1021 : 1021 - footer.Length;
+                        text = newItemSummary.Substring(0, indexOfFooter).Substring(0, footerLength);
                     }
                     catch (Exception e)
                     {
-                        
+                        Console.WriteLine("Error encountered ***. Message:'{0}' when cutting text", e.Message);
                     }
 
                     text += "..." + footer;
@@ -159,7 +168,7 @@ namespace AWSLambdaRssNotification
         private List<SyndicationItem> GetRssFeeds()
         {
             List<SyndicationItem> finalItems = new List<SyndicationItem>();
-
+            _feeds = _configService.GetConfiguration()["Feeds"].Split(";").ToList();
             foreach (string feed in _feeds)
             {
                 try
