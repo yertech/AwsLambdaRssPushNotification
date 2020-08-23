@@ -3,7 +3,7 @@
 This project consists of:
 * Lambda function in .Net Core to get notifications when a new job is available in a xml rss flux
 * Schedule by Cloud Watch Rule to be executed every 2min
-* Write the results in a S3 json file, just keep the jobns of the week
+* Write the results in a S3 json file, just keep the jobs of the week
 
 
 ## Here are the steps : 
